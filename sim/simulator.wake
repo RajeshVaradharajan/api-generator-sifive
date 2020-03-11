@@ -29,7 +29,7 @@ global def getTestResultStatus = match _
   TestFail f  = f.getTestFailedStatus
 
 tuple SimulationOutput =
-  Outputs_: List Path
+  global Outputs_: List Path
   Stdout_:  Result String Error
   Stderr_:  Result String Error
   Status_:  Integer
