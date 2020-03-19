@@ -56,6 +56,10 @@ global def getRocketChipDUTDTS         = getDUTDTS
 
 def getTestharnessTopModule testharness = (tokenize `\.` testharness).reverse.head
 
+def getWhenFailFn fn = match _
+  Pass a = a
+  Fail f = fn f
+
 global def rocketChipDUTMaker dutPlan userArgs =
   def rocketOutputs = doRocketGenerate dutPlan userArgs
   def firrtlOutputs = doFirrtlCompile dutPlan userArgs rocketOutputs
@@ -72,20 +76,31 @@ global def rocketChipDUTMaker dutPlan userArgs =
   def allOutputs = rocketOutputs.getRocketChipGeneratorOutputsAllOutputs
   def topModuleOpt = dutPlan.getRocketChipDUTPlanTestharness.getTestharnessTopModule
   def dts = rocketOutputs.getRocketChipGeneratorOutputsDTS
+
+  # TODO: This should be something that is captured by
+  # RocketChipGeneratorOutputs in rocket-chip.git, since only the Wake rules in
+  # that repo can know what the final output filenames look like.
+  # This can be replaced once we actually add that in rocket-chip.git.
   def dtsJSON =
-    def fileName =
+    def fileNameOpt =
       rocketOutputs
       | getRocketChipGeneratorOutputsInputOptions
-      | getRocketChipGeneratorOptionsConfigNames
-      | catWith "_"
-      | ("_root_.{_}.json")
-    def fileRegex = regExpCat (`([^/]*/)*`, fileName.quote, Nil)
+      | getRocketChipGeneratorOptionsBaseFileName
+      | omap ("{_}.json")
 
-    rocketOutputs
-    | getRocketChipGeneratorOutputsAllOutputs
-    | find (matches fileRegex _.getPathName)
-    | omap getPairFirst
-    | getOrElse "{fileName} file not found".makeError.makeBadPath
+    def getDTSJSONForFileName fileName =
+      def fileRegex = regExpCat (`([^/]*/)*`, fileName.quote, Nil)
+
+      rocketOutputs
+      | getRocketChipGeneratorOutputsAllOutputs
+      | find (matches fileRegex _.getPathName)
+      | omap getPairFirst
+      | getOrFail "{fileName} file not found".makeError
+
+    fileNameOpt
+    | getOrFail "dtsJSON not available if outputBaseName not explicitly passed to rocket-chip Generator.scala.".makeError
+    | rmapPass getDTSJSONForFileName
+    | getWhenFailFn (_.makeBadPath)
 
   match objectModelResult topModuleOpt
     (Pass objectModel) (Some topModule) =
