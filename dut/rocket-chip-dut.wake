@@ -56,10 +56,6 @@ global def getRocketChipDUTDTS         = getDUTDTS
 
 def getTestharnessTopModule testharness = (tokenize `\.` testharness).reverse.head
 
-def getWhenFailFn fn = match _
-  Pass a = a
-  Fail f = fn f
-
 global def rocketChipDUTMaker dutPlan userArgs =
   def rocketOutputs = doRocketGenerate dutPlan userArgs
   def firrtlOutputs = doFirrtlCompile dutPlan userArgs rocketOutputs
@@ -82,25 +78,36 @@ global def rocketChipDUTMaker dutPlan userArgs =
   # that repo can know what the final output filenames look like.
   # This can be replaced once we actually add that in rocket-chip.git.
   def dtsJSON =
-    def fileNameOpt =
+    # getFileName: RocketChipGeneratorOutputs => Result String String
+    def getFileName rocketOutputs =
       rocketOutputs
       | getRocketChipGeneratorOutputsInputOptions
       | getRocketChipGeneratorOptionsBaseFileName
       | omap ("{_}.json")
+      | getOrFail "dtsJSON not available if outputBaseName not explicitly passed to rocket-chip Generator.scala.".makeError
 
-    def getDTSJSONForFileName fileName =
-      def fileRegex = regExpCat (`([^/]*/)*`, fileName.quote, Nil)
-
+    # getOrFailOutputs: RocketChipGeneratorOutputs => Result (List Path) Error
+    # If any output is a BadPath, then return Fail with the first failed path.
+    # Otherwise return Pass with the full list of paths.
+    def getOrFailOutputs rocketOutputs =
       rocketOutputs
       | getRocketChipGeneratorOutputsAllOutputs
+      | findFailFn getPathResult
+
+    # findDTSJSONPath: String => List Path => Path
+    # Find the output Path corresponding to the filename, returning BadPath if
+    # not fonud.
+    def findDTSJSONPath fileName outputs =
+      def fileRegex = regExpCat (`([^/]*/)*`, fileName.quote, Nil)
+      outputs
       | find (matches fileRegex _.getPathName)
       | omap getPairFirst
-      | getOrFail "{fileName} file not found".makeError
+      | getOrElse "{fileName} file not found".makeError.makeBadPath
 
-    fileNameOpt
-    | getOrFail "dtsJSON not available if outputBaseName not explicitly passed to rocket-chip Generator.scala.".makeError
-    | rmapPass getDTSJSONForFileName
-    | getWhenFailFn (_.makeBadPath)
+    match (Pair (getFileName rocketOutputs) (getOrFailOutputs rocketOutputs))
+      Pair (Fail err) _ = err.makeBadPath
+      Pair _ (Fail err) = err.makeBadPath
+      Pair (Pass fileName) (Pass outputs) = findDTSJSONPath fileName outputs
 
   match objectModelResult topModuleOpt
     (Pass objectModel) (Some topModule) =
